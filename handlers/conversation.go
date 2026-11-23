@@ -10,10 +10,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ListConversations: GET /conversations (user) own conversations (admin: all).
+// ListConversations: GET /conversations (user) conversations the caller takes part in.
 func ListConversations(svc services.ConversationService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		result, apiErr := svc.ListConversations(c.Request.Context(), c.GetString("user_id"))
+		var query api.ListQuery
+		if err := c.ShouldBindQuery(&query); err != nil {
+			models.FormatError(c, &models.ApiError{Code: http.StatusBadRequest, Error: err})
+			return
+		}
+		result, apiErr := svc.ListConversations(c.Request.Context(), c.GetString("user_id"), query)
 		if apiErr != nil {
 			models.FormatError(c, apiErr)
 			return
@@ -22,7 +27,7 @@ func ListConversations(svc services.ConversationService) gin.HandlerFunc {
 	}
 }
 
-// StartConversation: POST /admin/conversations (admin) admin starts a chat with any user.
+// StartConversation: POST /admin/conversations (admin) admin starts a chat with any user (idempotent, returns the existing one).
 func StartConversation(svc services.ConversationService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req api.StartConversationRequest
@@ -30,12 +35,12 @@ func StartConversation(svc services.ConversationService) gin.HandlerFunc {
 			models.FormatError(c, &models.ApiError{Code: http.StatusBadRequest, Error: err})
 			return
 		}
-		result, apiErr := svc.StartConversation(c.Request.Context(), c.GetString("user_id"), req)
+		result, apiErr := svc.StartConversation(c.Request.Context(), c.GetString("user_id"), c.GetString("role"), req)
 		if apiErr != nil {
 			models.FormatError(c, apiErr)
 			return
 		}
-		c.JSON(http.StatusCreated, result)
+		c.JSON(http.StatusOK, result)
 	}
 }
 

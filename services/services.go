@@ -1,6 +1,7 @@
 package services
 
 import (
+	"9itchi-chat-api/core"
 	"9itchi-chat-api/pkg/account"
 	"9itchi-chat-api/pkg/notification"
 	"9itchi-chat-api/repositories"
@@ -23,7 +24,7 @@ type Clients struct {
 func InitServices(config utils.AppConfig, repos *repositories.Repositories) *Services {
 	return &Services{
 		Conversation: NewConversationService(repos.Conversation),
-		Message:      NewMessageService(repos.Message),
+		Message:      NewMessageService(repos.Store, repos.Conversation, repos.Message, core.NoopRealtime{}),
 		Clients: &Clients{
 			Account:      account.New(config.AccountAPIURL, config.InternalAPIKey),
 			Notification: notification.New(config.NotificationAPIURL, config.InternalAPIKey),

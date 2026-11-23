@@ -13,7 +13,12 @@ import (
 // ListMessages: GET /conversations/:id/messages (user) message history.
 func ListMessages(svc services.MessageService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		result, apiErr := svc.ListMessages(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
+		var query api.ListMessagesQuery
+		if err := c.ShouldBindQuery(&query); err != nil {
+			models.FormatError(c, &models.ApiError{Code: http.StatusBadRequest, Error: err})
+			return
+		}
+		result, apiErr := svc.ListMessages(c.Request.Context(), c.GetString("user_id"), c.Param("id"), query)
 		if apiErr != nil {
 			models.FormatError(c, apiErr)
 			return
@@ -22,7 +27,7 @@ func ListMessages(svc services.MessageService) gin.HandlerFunc {
 	}
 }
 
-// SendMessage: POST /conversations/:id/messages (user) store then publish on Ably channel (conversationId).
+// SendMessage: POST /conversations/:id/messages (user) store, bump unread, then publish on the realtime channel (conversationId).
 func SendMessage(svc services.MessageService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req api.SendMessageRequest
