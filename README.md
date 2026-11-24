@@ -1,6 +1,6 @@
 # 9itchi-chat-api
 
-Admin-user live support chat. PostgreSQL is the source of truth. Realtime delivery goes through the `core.Realtime` interface: Ably (REST publish to channel = conversation id, event `message`) when `ABLY_API_KEY` is set, otherwise a no-op. Publishing happens after the transaction commits and a failure never fails the stored message. Without the key `GET /chat/ably-token` returns `503` `{"error":"realtime unavailable"}`.
+Admin-user live support chat. PostgreSQL is the source of truth. Realtime delivery goes through the `core.Realtime` interface: Ably (REST publish to channel = conversation id, event `message`) when `ABLY_API_KEY` is set, otherwise a no-op. Publishing happens after the transaction commits and a failure never fails the stored message. Without the key `GET /chat/ably-token` returns `503` `{"error":"realtime unavailable"}`. The service publishes under its own Ably client id (`core.PublisherClientID`), because the Ably app requires identified clients; the tokens it signs are for the caller only.
 
 Port `8088`, health `/health`. Callers and roles come from the JWT (`user_id`, `role`). A user who is not a participant of a conversation gets `404`.
 
