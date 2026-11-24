@@ -18,7 +18,10 @@ import (
 	"go.uber.org/zap"
 )
 
-const maxMessageLength = 4000
+const (
+	maxMessageLength = 4000
+	publishTimeout   = 5 * time.Second
+)
 
 // MessageService holds all business logic for message. Handlers stay thin.
 type MessageService interface {
@@ -104,8 +107,11 @@ func (s *messageService) SendMessage(ctx context.Context, userID string, id stri
 	}
 
 	resp := mapping.MessageToResponse(*msg)
-	// The message is committed: a publish failure must not fail the request.
-	if err := s.realtime.Publish(ctx, id, resp); err != nil {
+	// The message is committed: a publish failure must not fail the request, and a client
+	// disconnect must not cancel delivery, so detach from the request cancellation and bound it.
+	pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), publishTimeout)
+	defer cancel()
+	if err := s.realtime.Publish(pubCtx, id, resp); err != nil {
 		utils.Logger.Warn("realtime publish failed", zap.String("conversation_id", id), zap.Error(err))
 	}
 	return &resp, nil

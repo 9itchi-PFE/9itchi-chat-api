@@ -2,16 +2,20 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"regexp"
+	"time"
 
+	"9itchi-chat-api/core"
 	"9itchi-chat-api/models"
 	"9itchi-chat-api/models/api"
 	"9itchi-chat-api/models/mapping"
 	"9itchi-chat-api/repositories"
 	"9itchi-chat-api/utils"
 
+	"github.com/ably/ably-go/ably"
 	"go.uber.org/zap"
 )
 
@@ -19,6 +23,12 @@ const (
 	defaultPageSize = 20
 	maxPageSize     = 100
 	roleAdmin       = "admin"
+	// ablyTokenTTL keeps tokens short so membership changes reach the capability quickly.
+	ablyTokenTTL = 30 * time.Minute
+	// maxTokenChannels bounds the capability size.
+	maxTokenChannels = maxPageSize
+	// noConversationsChannel is granted (subscribe only) to a user without conversations: an Ably capability cannot be empty.
+	noConversationsChannel = "_no_conversations"
 )
 
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -64,16 +74,17 @@ type ConversationService interface {
 	MarkConversationRead(ctx context.Context, userID string, id string) (*api.ConversationReadResponse, *models.ApiError)
 	// GET /user/global-unread-count: total unread across conversations
 	GlobalUnreadCount(ctx context.Context, userID string) (*api.UnreadCountResponse, *models.ApiError)
-	// GET /chat/ably-token: scoped Ably token request
-	AblyToken(ctx context.Context, userID string) (any, *models.ApiError)
+	// GET /chat/ably-token: Ably token request scoped to the caller's conversation channels (503 when Ably is not configured)
+	AblyToken(ctx context.Context, userID string) (*api.AblyTokenResponse, *models.ApiError)
 }
 
 type conversationService struct {
-	repo repositories.ConversationRepository
+	repo   repositories.ConversationRepository
+	tokens core.TokenRequestCreator // nil when Ably is not configured
 }
 
-func NewConversationService(repo repositories.ConversationRepository) ConversationService {
-	return &conversationService{repo: repo}
+func NewConversationService(repo repositories.ConversationRepository, tokens core.TokenRequestCreator) ConversationService {
+	return &conversationService{repo: repo, tokens: tokens}
 }
 
 func (s *conversationService) ListConversations(ctx context.Context, userID string, query api.ListQuery) (*api.ConversationListResponse, *models.ApiError) {
@@ -134,6 +145,36 @@ func (s *conversationService) GlobalUnreadCount(ctx context.Context, userID stri
 	return &api.UnreadCountResponse{UnreadCount: n}, nil
 }
 
-func (s *conversationService) AblyToken(_ context.Context, _ string) (any, *models.ApiError) {
-	return nil, models.NotImplemented()
+func (s *conversationService) AblyToken(ctx context.Context, userID string) (*api.AblyTokenResponse, *models.ApiError) {
+	if s.tokens == nil {
+		return nil, apiError(http.StatusServiceUnavailable, "realtime unavailable")
+	}
+	// Channel name = conversation id; the most recently updated conversations are granted.
+	items, _, err := s.repo.ListForUser(ctx, userID, maxTokenChannels, 0)
+	if err != nil {
+		return nil, repoError(err, "conversation not found")
+	}
+	caps := make(map[string][]string, len(items))
+	for _, it := range items {
+		// No publish: messages only enter through SendMessage, so a client cannot push unpersisted or forged events.
+		caps[it.ID] = []string{"subscribe", "presence", "history"}
+	}
+	if len(caps) == 0 {
+		caps[noConversationsChannel] = []string{"subscribe"}
+	}
+	capability, err := json.Marshal(caps)
+	if err != nil {
+		utils.Logger.Error("build ably capability", zap.Error(err))
+		return nil, apiError(http.StatusInternalServerError, "internal server error")
+	}
+	req, err := s.tokens.CreateTokenRequest(&ably.TokenParams{
+		TTL:        ablyTokenTTL.Milliseconds(),
+		Capability: string(capability),
+		ClientID:   userID,
+	})
+	if err != nil {
+		utils.Logger.Error("create ably token request", zap.Error(err))
+		return nil, apiError(http.StatusInternalServerError, "internal server error")
+	}
+	return req, nil
 }

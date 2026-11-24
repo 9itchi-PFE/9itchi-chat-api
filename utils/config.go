@@ -22,6 +22,8 @@ type AppConfig struct {
 	// Peer service base URLs.
 	AccountAPIURL      string
 	NotificationAPIURL string
+	// AblyAPIKey (env ABLY_API_KEY, optional) enables live delivery and the token endpoint. Never log it.
+	AblyAPIKey string
 }
 
 // LoadConfig loads configuration from environment variables.
@@ -37,6 +39,7 @@ func LoadConfig() AppConfig {
 		InternalAPIKeyRequired: getBoolWithDefault("INTERNAL_API_KEY_REQUIRED", true),
 		AccountAPIURL:          getStringWithDefault("ACCOUNT_API_URL", "http://9itchi-account-api:8081"),
 		NotificationAPIURL:     getStringWithDefault("NOTIFICATION_API_URL", "http://9itchi-notification-api:8087"),
+		AblyAPIKey:             getStringWithDefault("ABLY_API_KEY", ""),
 	}
 }
 

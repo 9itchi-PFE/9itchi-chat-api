@@ -11,6 +11,7 @@ import (
 	"9itchi-chat-api/models"
 	"9itchi-chat-api/models/api"
 
+	"github.com/ably/ably-go/ably"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,8 +54,11 @@ func (f *fakeConvSvc) GlobalUnreadCount(context.Context, string) (*api.UnreadCou
 	return &api.UnreadCountResponse{UnreadCount: 4}, nil
 }
 
-func (f *fakeConvSvc) AblyToken(context.Context, string) (any, *models.ApiError) {
-	return nil, models.NotImplemented()
+func (f *fakeConvSvc) AblyToken(_ context.Context, userID string) (*api.AblyTokenResponse, *models.ApiError) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &api.AblyTokenResponse{TokenParams: ably.TokenParams{Capability: `{"c1":["subscribe"]}`, ClientID: userID}, KeyName: "app.key"}, nil
 }
 
 type fakeMsgSvc struct {
@@ -140,9 +144,16 @@ func TestGlobalUnreadCountHandler(t *testing.T) {
 	assert.JSONEq(t, `{"unread_count":4}`, w.Body.String())
 }
 
-func TestAblyTokenHandlerStays501(t *testing.T) {
-	w := do(AblyToken(&fakeConvSvc{}), http.MethodGet, "/chat/ably-token", "/chat/ably-token", "")
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
+func TestAblyTokenHandler(t *testing.T) {
+	svc := &fakeConvSvc{}
+	w := do(AblyToken(svc), http.MethodGet, "/chat/ably-token", "/chat/ably-token", "")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.JSONEq(t, `{"capability":"{\"c1\":[\"subscribe\"]}","clientId":"u1","keyName":"app.key"}`, w.Body.String())
+
+	svc.err = &models.ApiError{Code: http.StatusServiceUnavailable, Error: errors.New("realtime unavailable")}
+	w = do(AblyToken(svc), http.MethodGet, "/chat/ably-token", "/chat/ably-token", "")
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Contains(t, w.Body.String(), `"error":"realtime unavailable"`)
 }
 
 func TestListMessagesHandler(t *testing.T) {

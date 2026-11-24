@@ -1,6 +1,10 @@
 package api
 
-import "time"
+import (
+	"time"
+
+	"github.com/ably/ably-go/ably"
+)
 
 // StartConversationRequest is the validated body of StartConversation.
 type StartConversationRequest struct {
@@ -44,6 +48,9 @@ type ConversationReadResponse struct {
 	ConversationID string `json:"conversation_id"`
 	UnreadCount    int    `json:"unread_count"`
 }
+
+// AblyTokenResponse is the signed Ably TokenRequest, returned as-is so the Ably client can use it as authUrl output.
+type AblyTokenResponse = ably.TokenRequest
 
 // UnreadCountResponse is the caller's total unread messages.
 type UnreadCountResponse struct {

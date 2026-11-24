@@ -12,6 +12,7 @@ import (
 	"9itchi-chat-api/repositories"
 	"9itchi-chat-api/services/mocks"
 
+	"github.com/ably/ably-go/ably"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -41,7 +42,7 @@ func TestStartConversation(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := NewConversationService(newRepo())
+			svc := NewConversationService(newRepo(), nil)
 			resp, apiErr := svc.StartConversation(context.Background(), tc.caller, tc.role, tc.req)
 			if tc.wantCode != 0 {
 				require.NotNil(t, apiErr)
@@ -58,7 +59,7 @@ func TestStartConversation(t *testing.T) {
 	t.Run("repo error is 500", func(t *testing.T) {
 		repo := newRepo()
 		repo.GetOrCreateFn = func(context.Context, string, string) (*db.Conversation, error) { return nil, errors.New("boom") }
-		_, apiErr := NewConversationService(repo).StartConversation(context.Background(), adminID, "admin", api.StartConversationRequest{UserID: userID})
+		_, apiErr := NewConversationService(repo, nil).StartConversation(context.Background(), adminID, "admin", api.StartConversationRequest{UserID: userID})
 		require.NotNil(t, apiErr)
 		assert.Equal(t, http.StatusInternalServerError, apiErr.Code)
 	})
@@ -76,7 +77,7 @@ func TestListConversations(t *testing.T) {
 			{ID: "c2"},
 		}, 7, nil
 	}
-	resp, apiErr := NewConversationService(repo).ListConversations(context.Background(), adminID, api.ListQuery{Page: 2, PageSize: 1000})
+	resp, apiErr := NewConversationService(repo, nil).ListConversations(context.Background(), adminID, api.ListQuery{Page: 2, PageSize: 1000})
 
 	require.Nil(t, apiErr)
 	assert.Equal(t, 7, resp.Total)
@@ -91,7 +92,7 @@ func TestListConversations(t *testing.T) {
 	repo.ListForUserFn = func(context.Context, string, int, int) ([]db.ConversationSummary, int, error) {
 		return nil, 0, errors.New("boom")
 	}
-	_, apiErr = NewConversationService(repo).ListConversations(context.Background(), adminID, api.ListQuery{})
+	_, apiErr = NewConversationService(repo, nil).ListConversations(context.Background(), adminID, api.ListQuery{})
 	require.NotNil(t, apiErr)
 	assert.Equal(t, http.StatusInternalServerError, apiErr.Code)
 }
@@ -105,7 +106,7 @@ func TestMarkConversationRead(t *testing.T) {
 			return repositories.ErrNotFound
 		},
 	}
-	svc := NewConversationService(repo)
+	svc := NewConversationService(repo, nil)
 
 	resp, apiErr := svc.MarkConversationRead(context.Background(), userID, convID)
 	require.Nil(t, apiErr)
@@ -122,18 +123,80 @@ func TestMarkConversationRead(t *testing.T) {
 
 func TestGlobalUnreadCount(t *testing.T) {
 	repo := &mocks.ConversationRepo{GlobalUnreadCountFn: func(_ context.Context, uid string) (int, error) { return 5, nil }}
-	resp, apiErr := NewConversationService(repo).GlobalUnreadCount(context.Background(), userID)
+	resp, apiErr := NewConversationService(repo, nil).GlobalUnreadCount(context.Background(), userID)
 	require.Nil(t, apiErr)
 	assert.Equal(t, 5, resp.UnreadCount)
 
 	repo.GlobalUnreadCountFn = func(context.Context, string) (int, error) { return 0, errors.New("boom") }
-	_, apiErr = NewConversationService(repo).GlobalUnreadCount(context.Background(), userID)
+	_, apiErr = NewConversationService(repo, nil).GlobalUnreadCount(context.Background(), userID)
 	require.NotNil(t, apiErr)
 	assert.Equal(t, http.StatusInternalServerError, apiErr.Code)
 }
 
-func TestAblyTokenNotImplemented(t *testing.T) {
-	_, apiErr := NewConversationService(&mocks.ConversationRepo{}).AblyToken(context.Background(), userID)
-	require.NotNil(t, apiErr)
-	assert.Equal(t, http.StatusNotImplemented, apiErr.Code)
+type fakeTokens struct {
+	params *ably.TokenParams
+	err    error
+}
+
+func (f *fakeTokens) CreateTokenRequest(params *ably.TokenParams, _ ...ably.AuthOption) (*ably.TokenRequest, error) {
+	f.params = params
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &ably.TokenRequest{TokenParams: *params, KeyName: "app.key"}, nil
+}
+
+func TestAblyToken(t *testing.T) {
+	const allOps = `["subscribe","presence","history"]`
+	listing := func(ids ...string) *mocks.ConversationRepo {
+		return &mocks.ConversationRepo{ListForUserFn: func(_ context.Context, uid string, limit, offset int) ([]db.ConversationSummary, int, error) {
+			assert.Equal(t, userID, uid)
+			assert.Equal(t, maxTokenChannels, limit)
+			assert.Equal(t, 0, offset)
+			items := make([]db.ConversationSummary, 0, len(ids))
+			for _, id := range ids {
+				items = append(items, db.ConversationSummary{ID: id})
+			}
+			return items, len(items), nil
+		}}
+	}
+
+	t.Run("grants only the caller conversations", func(t *testing.T) {
+		tokens := &fakeTokens{}
+		res, apiErr := NewConversationService(listing(convID, otherID), tokens).AblyToken(context.Background(), userID)
+		require.Nil(t, apiErr)
+		assert.JSONEq(t, `{"`+convID+`":`+allOps+`,"`+otherID+`":`+allOps+`}`, res.Capability)
+		assert.Equal(t, userID, tokens.params.ClientID)
+		assert.Equal(t, (30 * time.Minute).Milliseconds(), tokens.params.TTL)
+		assert.Equal(t, "app.key", res.KeyName)
+	})
+
+	t.Run("placeholder subscribe-only channel without conversations", func(t *testing.T) {
+		res, apiErr := NewConversationService(listing(), &fakeTokens{}).AblyToken(context.Background(), userID)
+		require.Nil(t, apiErr)
+		assert.JSONEq(t, `{"_no_conversations":["subscribe"]}`, res.Capability)
+	})
+
+	t.Run("unavailable without ably", func(t *testing.T) {
+		_, apiErr := NewConversationService(listing(convID), nil).AblyToken(context.Background(), userID)
+		require.NotNil(t, apiErr)
+		assert.Equal(t, http.StatusServiceUnavailable, apiErr.Code)
+		assert.EqualError(t, apiErr.Error, "realtime unavailable")
+	})
+
+	t.Run("repo error is a generic 500", func(t *testing.T) {
+		repo := &mocks.ConversationRepo{ListForUserFn: func(context.Context, string, int, int) ([]db.ConversationSummary, int, error) {
+			return nil, 0, errors.New("boom")
+		}}
+		_, apiErr := NewConversationService(repo, &fakeTokens{}).AblyToken(context.Background(), userID)
+		require.NotNil(t, apiErr)
+		assert.Equal(t, http.StatusInternalServerError, apiErr.Code)
+	})
+
+	t.Run("creator error is a generic 500", func(t *testing.T) {
+		_, apiErr := NewConversationService(listing(convID), &fakeTokens{err: errors.New("key=secret")}).AblyToken(context.Background(), userID)
+		require.NotNil(t, apiErr)
+		assert.Equal(t, http.StatusInternalServerError, apiErr.Code)
+		assert.EqualError(t, apiErr.Error, "internal server error")
+	})
 }

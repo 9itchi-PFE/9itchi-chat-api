@@ -22,9 +22,10 @@ type Clients struct {
 }
 
 func InitServices(config utils.AppConfig, repos *repositories.Repositories) *Services {
+	realtime, tokens := core.NewRealtime(config.AblyAPIKey)
 	return &Services{
-		Conversation: NewConversationService(repos.Conversation),
-		Message:      NewMessageService(repos.Store, repos.Conversation, repos.Message, core.NoopRealtime{}),
+		Conversation: NewConversationService(repos.Conversation, tokens),
+		Message:      NewMessageService(repos.Store, repos.Conversation, repos.Message, realtime),
 		Clients: &Clients{
 			Account:      account.New(config.AccountAPIURL, config.InternalAPIKey),
 			Notification: notification.New(config.NotificationAPIURL, config.InternalAPIKey),
