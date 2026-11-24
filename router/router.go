@@ -24,9 +24,10 @@ func initializeRoutes(r *gin.Engine, services *services.Services) {
 
 	// user endpoints
 	userGroup := r.Group("/")
-	userGroup.Use(AuthMiddleware())
+	userGroup.Use(AuthMiddleware(), SupportSeat())
 	{
 		userGroup.GET("/conversations", handlers.ListConversations(services.Conversation))
+		userGroup.POST("/conversations", handlers.OpenSupport(services.Conversation))
 		userGroup.PUT("/conversations/:id/read", handlers.MarkConversationRead(services.Conversation))
 		userGroup.GET("/user/global-unread-count", handlers.GlobalUnreadCount(services.Conversation))
 		userGroup.GET("/chat/ably-token", handlers.AblyToken(services.Conversation))

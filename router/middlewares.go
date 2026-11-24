@@ -1,6 +1,7 @@
 package router
 
 import (
+	"9itchi-chat-api/core"
 	"crypto/subtle"
 	"net"
 	"net/http"
@@ -189,5 +190,14 @@ func InternalAPIKeyMiddleware() gin.HandlerFunc {
 		}
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		c.Abort()
+	}
+}
+
+// SupportSeat says which participant the caller acts as in conversations (key "seat_id"): the team for an admin,
+// themselves for a student. It runs after AuthMiddleware.
+func SupportSeat() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Set("seat_id", core.SeatOf(c.GetString("user_id"), c.GetString("role")))
+		c.Next()
 	}
 }

@@ -182,3 +182,57 @@ func TestCascadeDeleteRemovesChildren(t *testing.T) {
 	require.NoError(t, store.Conn(ctx).QueryRow(ctx, `SELECT count(*) FROM messages`).Scan(&m))
 	assert.Zero(t, p+m)
 }
+
+// The team has one seat in every conversation: any admin reads and answers from it, and a student has one
+// conversation with the team whoever opened it.
+func TestTeamSeat(t *testing.T) {
+	store := newTestStore(t)
+	convs, msgs := NewConversationRepository(store), NewMessageRepository(store)
+	ctx := context.Background()
+	const team = "00000000-0000-4000-8000-000000000000"
+	const student, other, anAdmin = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333"
+
+	first, err := convs.GetOrCreate(ctx, team, student)
+	require.NoError(t, err)
+	again, err := convs.GetOrCreate(ctx, team, student)
+	require.NoError(t, err)
+	assert.Equal(t, first.ID, again.ID, "one conversation per student")
+	second, err := convs.GetOrCreate(ctx, team, other)
+	require.NoError(t, err)
+
+	// The student writes: the team has one unread, the student none.
+	_, err = msgs.Create(ctx, first.ID, student, "Bonjour")
+	require.NoError(t, err)
+	require.NoError(t, convs.IncrementUnreadForOthers(ctx, first.ID, student))
+	n, err := convs.GlobalUnreadCount(ctx, team)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+	n, err = convs.GlobalUnreadCount(ctx, student)
+	require.NoError(t, err)
+	assert.Zero(t, n)
+
+	// An admin answers from the seat of the team: the message keeps the admin as its sender, the student gets one unread.
+	m, err := msgs.Create(ctx, first.ID, anAdmin, "On regarde")
+	require.NoError(t, err)
+	assert.Equal(t, anAdmin, m.SenderID)
+	require.NoError(t, convs.IncrementUnreadForOthers(ctx, first.ID, team))
+	n, err = convs.GlobalUnreadCount(ctx, student)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+	n, err = convs.GlobalUnreadCount(ctx, team)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "the team's own answer does not count as unread for the team")
+
+	// The inbox of the team holds every student; an admin's own id holds nothing.
+	list, total, err := convs.ListForUser(ctx, team, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
+	assert.ElementsMatch(t, []string{first.ID, second.ID}, []string{list[0].ID, list[1].ID})
+	_, total, err = convs.ListForUser(ctx, anAdmin, 10, 0)
+	require.NoError(t, err)
+	assert.Zero(t, total)
+	_, err = convs.GetForParticipant(ctx, first.ID, anAdmin)
+	assert.ErrorIs(t, err, ErrNotFound)
+	_, err = convs.GetForParticipant(ctx, first.ID, other)
+	assert.ErrorIs(t, err, ErrNotFound, "another student does not see it")
+}

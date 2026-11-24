@@ -1,6 +1,7 @@
 package services
 
 import (
+	"9itchi-chat-api/core"
 	"context"
 	"errors"
 	"net/http"
@@ -163,7 +164,7 @@ func TestAblyToken(t *testing.T) {
 
 	t.Run("grants only the caller conversations", func(t *testing.T) {
 		tokens := &fakeTokens{}
-		res, apiErr := NewConversationService(listing(convID, otherID), tokens).AblyToken(context.Background(), userID)
+		res, apiErr := NewConversationService(listing(convID, otherID), tokens).AblyToken(context.Background(), userID, userID)
 		require.Nil(t, apiErr)
 		assert.JSONEq(t, `{"`+convID+`":`+allOps+`,"`+otherID+`":`+allOps+`}`, res.Capability)
 		assert.Equal(t, userID, tokens.params.ClientID)
@@ -172,13 +173,13 @@ func TestAblyToken(t *testing.T) {
 	})
 
 	t.Run("placeholder subscribe-only channel without conversations", func(t *testing.T) {
-		res, apiErr := NewConversationService(listing(), &fakeTokens{}).AblyToken(context.Background(), userID)
+		res, apiErr := NewConversationService(listing(), &fakeTokens{}).AblyToken(context.Background(), userID, userID)
 		require.Nil(t, apiErr)
 		assert.JSONEq(t, `{"_no_conversations":["subscribe"]}`, res.Capability)
 	})
 
 	t.Run("unavailable without ably", func(t *testing.T) {
-		_, apiErr := NewConversationService(listing(convID), nil).AblyToken(context.Background(), userID)
+		_, apiErr := NewConversationService(listing(convID), nil).AblyToken(context.Background(), userID, userID)
 		require.NotNil(t, apiErr)
 		assert.Equal(t, http.StatusServiceUnavailable, apiErr.Code)
 		assert.EqualError(t, apiErr.Error, "realtime unavailable")
@@ -188,15 +189,60 @@ func TestAblyToken(t *testing.T) {
 		repo := &mocks.ConversationRepo{ListForUserFn: func(context.Context, string, int, int) ([]db.ConversationSummary, int, error) {
 			return nil, 0, errors.New("boom")
 		}}
-		_, apiErr := NewConversationService(repo, &fakeTokens{}).AblyToken(context.Background(), userID)
+		_, apiErr := NewConversationService(repo, &fakeTokens{}).AblyToken(context.Background(), userID, userID)
 		require.NotNil(t, apiErr)
 		assert.Equal(t, http.StatusInternalServerError, apiErr.Code)
 	})
 
 	t.Run("creator error is a generic 500", func(t *testing.T) {
-		_, apiErr := NewConversationService(listing(convID), &fakeTokens{err: errors.New("key=secret")}).AblyToken(context.Background(), userID)
+		_, apiErr := NewConversationService(listing(convID), &fakeTokens{err: errors.New("key=secret")}).AblyToken(context.Background(), userID, userID)
 		require.NotNil(t, apiErr)
 		assert.Equal(t, http.StatusInternalServerError, apiErr.Code)
 		assert.EqualError(t, apiErr.Error, "internal server error")
 	})
+}
+
+// Support is a team inbox: whoever opens it, the conversation is the one between the team and the student.
+func TestTeamInbox(t *testing.T) {
+	var pairs [][2]string
+	var seats []string
+	repo := &mocks.ConversationRepo{
+		GetOrCreateFn: func(_ context.Context, a, u string) (*db.Conversation, error) {
+			pairs = append(pairs, [2]string{a, u})
+			return &db.Conversation{ID: convID, AdminID: a, UserID: u}, nil
+		},
+		GetForParticipantFn: func(_ context.Context, id, seat string) (*db.ConversationSummary, error) {
+			seats = append(seats, seat)
+			return &db.ConversationSummary{ID: id, AdminID: core.TeamID, UserID: userID}, nil
+		},
+	}
+	svc := NewConversationService(repo, nil)
+
+	// A student opens it: seen from their own seat.
+	resp, apiErr := svc.OpenSupport(context.Background(), userID, "candidate")
+	require.Nil(t, apiErr)
+	assert.Equal(t, convID, resp.ID)
+	assert.Equal(t, core.TeamID, resp.AdminID)
+	// Any admin writes to the student: the same pair, seen from the seat of the team.
+	_, apiErr = svc.StartConversation(context.Background(), adminID, "admin", api.StartConversationRequest{UserID: userID})
+	require.Nil(t, apiErr)
+	_, apiErr = svc.StartConversation(context.Background(), otherID, "admin", api.StartConversationRequest{UserID: userID})
+	require.Nil(t, apiErr)
+
+	assert.Equal(t, [][2]string{{core.TeamID, userID}, {core.TeamID, userID}, {core.TeamID, userID}}, pairs)
+	assert.Equal(t, []string{userID, core.TeamID, core.TeamID}, seats)
+
+	// An admin has no conversation of their own, and nobody talks to the seat of the team itself.
+	_, apiErr = svc.OpenSupport(context.Background(), adminID, "admin")
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusForbidden, apiErr.Code)
+	_, apiErr = svc.OpenSupport(context.Background(), "nope", "candidate")
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusBadRequest, apiErr.Code)
+	_, apiErr = svc.StartConversation(context.Background(), adminID, "admin", api.StartConversationRequest{UserID: core.TeamID})
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusBadRequest, apiErr.Code)
+
+	assert.Equal(t, core.TeamID, core.SeatOf(adminID, "admin"))
+	assert.Equal(t, userID, core.SeatOf(userID, "candidate"))
 }

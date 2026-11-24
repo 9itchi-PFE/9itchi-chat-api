@@ -9,12 +9,23 @@ Port `8088`, health `/health`. Callers and roles come from the JWT (`user_id`, `
 | Method | Path | Access | Handler | Notes |
 |---|---|---|---|---|
 | GET | `/conversations` | user | ListConversations | Own conversations, `page`/`page_size` (max 100), last message preview + caller's unread count, `updated_at` desc |
-| POST | `/admin/conversations` | admin | StartConversation | Body `{"user_id"}`. Idempotent per admin+user pair, returns the existing conversation |
+| POST | `/conversations` | user | OpenSupport (the student's conversation with the team, created on first use; 403 for an admin) |
+| POST | `/admin/conversations` | admin | StartConversation (the team's conversation with a student: body `user_id`; created on first use) |
 | PUT | `/conversations/:id/read` | user | MarkConversationRead | Resets the caller's unread count |
 | GET | `/user/global-unread-count` | user | GlobalUnreadCount | Sum of the caller's unread counts |
 | GET | `/chat/ably-token` | user | AblyToken | Ably TokenRequest (30 min TTL, `clientId` = caller). Capability: subscribe/presence/history (no publish: only SendMessage publishes) on the caller's conversation channels (100 most recent), or subscribe on a placeholder channel when none. 503 without `ABLY_API_KEY` |
 | GET | `/conversations/:id/messages` | user | ListMessages | Newest first, `page`/`page_size` (max 100), optional `before` (RFC3339) cursor on `created_at` |
 | POST | `/conversations/:id/messages` | user | SendMessage | Body `{"content"}` trimmed, 1..4000 chars. One transaction: insert, bump `updated_at`, increment the other participant's unread count; then publish on channel = conversation id |
+
+## Team inbox (sprint 7)
+
+Support is a team inbox. A student has one conversation, with the team as a whole; any admin reads and answers it.
+
+- The team has one seat in every conversation: the fixed id `00000000-0000-4000-8000-000000000000` (`core.TeamID`), returned as `admin_id`. It has one unread count, shared by the admins.
+- A caller acts from a seat (`SupportSeat` middleware): the team for an admin, themselves for a student. Lists, reading, unread counts, the Ably token and the right to write go by seat.
+- A message keeps who wrote it: `sender_id` is the admin, not the team. For the student, any `sender_id` other than their own is the team.
+- A student opens their conversation with `POST /conversations`; the team opens one with a student with `POST /admin/conversations`. Both return the same conversation.
+- Migration `0002_team_inbox.sql` moves existing conversations to the team: per student the most recent one is kept and the messages of the others move into it. It cannot be undone.
 
 ## Run
 
