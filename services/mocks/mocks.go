@@ -10,6 +10,7 @@ import (
 
 // ConversationRepo is a function-field mock of repositories.ConversationRepository.
 type ConversationRepo struct {
+	SetResolvedFn              func(ctx context.Context, id string, resolved bool) error
 	GetOrCreateFn              func(ctx context.Context, adminID, userID string) (*db.Conversation, error)
 	GetForParticipantFn        func(ctx context.Context, id, userID string) (*db.ConversationSummary, error)
 	ListForUserFn              func(ctx context.Context, userID string, limit, offset int) ([]db.ConversationSummary, int, error)
@@ -84,4 +85,11 @@ func (m *Realtime) Publish(_ context.Context, channel string, payload any) error
 	m.Channels = append(m.Channels, channel)
 	m.Payloads = append(m.Payloads, payload)
 	return m.Err
+}
+
+func (m *ConversationRepo) SetResolved(ctx context.Context, id string, resolved bool) error {
+	if m.SetResolvedFn == nil {
+		return nil
+	}
+	return m.SetResolvedFn(ctx, id, resolved)
 }

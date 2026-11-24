@@ -23,6 +23,7 @@ type fakeConvSvc struct {
 	startReq  api.StartConversationRequest
 	err       *models.ApiError
 	seat      string
+	resolved  *bool
 }
 
 func (f *fakeConvSvc) ListConversations(_ context.Context, _ string, q api.ListQuery) (*api.ConversationListResponse, *models.ApiError) {
@@ -53,6 +54,14 @@ func (f *fakeConvSvc) GlobalUnreadCount(context.Context, string) (*api.UnreadCou
 		return nil, f.err
 	}
 	return &api.UnreadCountResponse{UnreadCount: 4}, nil
+}
+
+func (f *fakeConvSvc) SetResolved(_ context.Context, id string, req api.ResolveRequest) (*api.ConversationResponse, *models.ApiError) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	f.resolved = req.Resolved
+	return &api.ConversationResponse{ID: id}, nil
 }
 
 func (f *fakeConvSvc) OpenSupport(_ context.Context, userID, role string) (*api.ConversationResponse, *models.ApiError) {
@@ -213,4 +222,15 @@ func TestAblyTokenGoesBySeat(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "team-seat", svc.seat)
 	assert.Contains(t, w.Body.String(), `"clientId":"u1"`)
+}
+
+func TestSetResolvedHandler(t *testing.T) {
+	svc := &fakeConvSvc{}
+	w := do(SetResolved(svc), http.MethodPut, "/admin/conversations/c1/resolved", "/admin/conversations/:id/resolved", `{"resolved":true}`)
+	assert.Equal(t, http.StatusOK, w.Code)
+	if assert.NotNil(t, svc.resolved) {
+		assert.True(t, *svc.resolved)
+	}
+	w = do(SetResolved(svc), http.MethodPut, "/admin/conversations/c1/resolved", "/admin/conversations/:id/resolved", `{}`)
+	assert.Equal(t, http.StatusBadRequest, w.Code, "resolved must be said")
 }

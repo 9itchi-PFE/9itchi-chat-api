@@ -91,3 +91,20 @@ func OpenSupport(svc services.ConversationService) gin.HandlerFunc {
 		c.JSON(http.StatusOK, result)
 	}
 }
+
+// SetResolved: PUT /admin/conversations/:id/resolved (admin) mark a conversation as resolved, or open again.
+func SetResolved(svc services.ConversationService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req api.ResolveRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			models.FormatError(c, &models.ApiError{Code: http.StatusBadRequest, Error: err})
+			return
+		}
+		result, apiErr := svc.SetResolved(c.Request.Context(), c.Param("id"), req)
+		if apiErr != nil {
+			models.FormatError(c, apiErr)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	}
+}

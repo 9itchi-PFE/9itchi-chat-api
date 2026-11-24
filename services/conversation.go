@@ -72,6 +72,8 @@ type ConversationService interface {
 	OpenSupport(ctx context.Context, userID, role string) (*api.ConversationResponse, *models.ApiError)
 	// POST /admin/conversations: the team's conversation with a student, created on first use
 	StartConversation(ctx context.Context, userID, role string, req api.StartConversationRequest) (*api.ConversationResponse, *models.ApiError)
+	// PUT /admin/conversations/:id/resolved: the team marks a conversation as resolved, or open again
+	SetResolved(ctx context.Context, id string, req api.ResolveRequest) (*api.ConversationResponse, *models.ApiError)
 	// PUT /conversations/:id/read: reset the caller's unread count
 	MarkConversationRead(ctx context.Context, userID string, id string) (*api.ConversationReadResponse, *models.ApiError)
 	// GET /user/global-unread-count: total unread across conversations
@@ -140,6 +142,25 @@ func (s *conversationService) open(ctx context.Context, studentID, seatID string
 		return nil, repoError(err, "conversation not found")
 	}
 	summary, err := s.repo.GetForParticipant(ctx, conv.ID, seatID)
+	if err != nil {
+		return nil, repoError(err, "conversation not found")
+	}
+	resp := mapping.ConversationSummaryToResponse(*summary)
+	return &resp, nil
+}
+
+// SetResolved is the team's: a resolved conversation stays in the inbox, and any new message opens it again.
+func (s *conversationService) SetResolved(ctx context.Context, id string, req api.ResolveRequest) (*api.ConversationResponse, *models.ApiError) {
+	if req.Resolved == nil {
+		return nil, apiError(http.StatusBadRequest, "resolved is required")
+	}
+	if !uuidRe.MatchString(id) {
+		return nil, apiError(http.StatusNotFound, "conversation not found")
+	}
+	if err := s.repo.SetResolved(ctx, id, *req.Resolved); err != nil {
+		return nil, repoError(err, "conversation not found")
+	}
+	summary, err := s.repo.GetForParticipant(ctx, id, core.TeamID)
 	if err != nil {
 		return nil, repoError(err, "conversation not found")
 	}

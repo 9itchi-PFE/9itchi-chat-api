@@ -33,6 +33,13 @@ type ConversationResponse struct {
 	LastMessage *MessagePreview `json:"last_message"`
 	UpdatedAt   time.Time       `json:"updated_at"`
 	CreatedAt   time.Time       `json:"created_at"`
+	// ResolvedAt is when the team marked the conversation as resolved; nil while it is open.
+	ResolvedAt *time.Time `json:"resolved_at"`
+}
+
+// ResolveRequest is the validated body of SetResolved.
+type ResolveRequest struct {
+	Resolved *bool `json:"resolved" binding:"required"`
 }
 
 // ConversationListResponse is a page of conversations.

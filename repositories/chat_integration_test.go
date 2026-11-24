@@ -236,3 +236,34 @@ func TestTeamSeat(t *testing.T) {
 	_, err = convs.GetForParticipant(ctx, first.ID, other)
 	assert.ErrorIs(t, err, ErrNotFound, "another student does not see it")
 }
+
+func TestResolvedUntilTheNextMessage(t *testing.T) {
+	store := newTestStore(t)
+	convs := NewConversationRepository(store)
+	ctx := context.Background()
+	const team, student = "00000000-0000-4000-8000-000000000000", "11111111-1111-4111-8111-111111111111"
+	c, err := convs.GetOrCreate(ctx, team, student)
+	require.NoError(t, err)
+
+	require.NoError(t, convs.SetResolved(ctx, c.ID, true))
+	s, err := convs.GetForParticipant(ctx, c.ID, team)
+	require.NoError(t, err)
+	require.NotNil(t, s.ResolvedAt)
+	list, _, err := convs.ListForUser(ctx, student, 10, 0)
+	require.NoError(t, err)
+	require.NotNil(t, list[0].ResolvedAt, "the student's view says so too")
+
+	// A new message (Touch) opens it again.
+	require.NoError(t, convs.Touch(ctx, c.ID))
+	s, err = convs.GetForParticipant(ctx, c.ID, team)
+	require.NoError(t, err)
+	assert.Nil(t, s.ResolvedAt)
+
+	require.NoError(t, convs.SetResolved(ctx, c.ID, true))
+	require.NoError(t, convs.SetResolved(ctx, c.ID, false))
+	s, err = convs.GetForParticipant(ctx, c.ID, team)
+	require.NoError(t, err)
+	assert.Nil(t, s.ResolvedAt)
+
+	assert.ErrorIs(t, convs.SetResolved(ctx, "99999999-9999-4999-8999-999999999999", true), ErrNotFound)
+}

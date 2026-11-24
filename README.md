@@ -11,6 +11,7 @@ Port `8088`, health `/health`. Callers and roles come from the JWT (`user_id`, `
 | GET | `/conversations` | user | ListConversations | The conversations of the caller's seat (every student for an admin), `page`/`page_size` (max 100), last message preview + caller's unread count, `updated_at` desc |
 | POST | `/conversations` | user | OpenSupport | The student's conversation with the team, created on first use. 403 for an admin |
 | POST | `/admin/conversations` | admin | StartConversation | Body `{"user_id"}`. The team's conversation with that student, created on first use |
+| PUT | `/admin/conversations/:id/resolved` | admin | SetResolved | Body `{"resolved": true}`. A resolved conversation stays in the inbox with `resolved_at`; any new message opens it again |
 | PUT | `/conversations/:id/read` | user | MarkConversationRead | Resets the caller's unread count |
 | GET | `/user/global-unread-count` | user | GlobalUnreadCount | Sum of the caller's unread counts |
 | GET | `/chat/ably-token` | user | AblyToken | Ably TokenRequest (30 min TTL, `clientId` = caller). Capability: subscribe/presence/history (no publish: only SendMessage publishes) on the caller's conversation channels (100 most recent), or subscribe on a placeholder channel when none. 503 without `ABLY_API_KEY` |

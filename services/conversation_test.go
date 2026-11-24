@@ -246,3 +246,44 @@ func TestTeamInbox(t *testing.T) {
 	assert.Equal(t, core.TeamID, core.SeatOf(adminID, "admin"))
 	assert.Equal(t, userID, core.SeatOf(userID, "candidate"))
 }
+
+func TestSetResolved(t *testing.T) {
+	var got []bool
+	at := time.Unix(50, 0)
+	repo := &mocks.ConversationRepo{
+		SetResolvedFn: func(_ context.Context, id string, resolved bool) error {
+			if id != convID {
+				return repositories.ErrNotFound
+			}
+			got = append(got, resolved)
+			return nil
+		},
+		GetForParticipantFn: func(_ context.Context, id, seat string) (*db.ConversationSummary, error) {
+			require.Equal(t, core.TeamID, seat, "the team's view of the conversation is returned")
+			s := &db.ConversationSummary{ID: id, AdminID: core.TeamID, UserID: userID}
+			if got[len(got)-1] {
+				s.ResolvedAt = &at
+			}
+			return s, nil
+		},
+	}
+	svc := NewConversationService(repo, nil)
+	yes, no := true, false
+
+	resp, apiErr := svc.SetResolved(context.Background(), convID, api.ResolveRequest{Resolved: &yes})
+	require.Nil(t, apiErr)
+	require.NotNil(t, resp.ResolvedAt)
+	resp, apiErr = svc.SetResolved(context.Background(), convID, api.ResolveRequest{Resolved: &no})
+	require.Nil(t, apiErr)
+	assert.Nil(t, resp.ResolvedAt)
+	assert.Equal(t, []bool{true, false}, got)
+
+	_, apiErr = svc.SetResolved(context.Background(), convID, api.ResolveRequest{})
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusBadRequest, apiErr.Code)
+	for _, id := range []string{"nope", otherID} {
+		_, apiErr = svc.SetResolved(context.Background(), id, api.ResolveRequest{Resolved: &yes})
+		require.NotNil(t, apiErr)
+		assert.Equal(t, http.StatusNotFound, apiErr.Code)
+	}
+}

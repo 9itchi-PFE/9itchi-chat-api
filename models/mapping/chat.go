@@ -13,6 +13,7 @@ func ConversationSummaryToResponse(s db.ConversationSummary) api.ConversationRes
 		UnreadCount: s.UnreadCount,
 		UpdatedAt:   s.UpdatedAt,
 		CreatedAt:   s.CreatedAt,
+		ResolvedAt:  s.ResolvedAt,
 	}
 	if s.LastMessageContent != nil && s.LastMessageSenderID != nil && s.LastMessageAt != nil {
 		resp.LastMessage = &api.MessagePreview{

@@ -21,8 +21,10 @@ type ConversationRepository interface {
 	MarkRead(ctx context.Context, id, userID string) error
 	// GlobalUnreadCount sums the caller's unread counts in one aggregate query.
 	GlobalUnreadCount(ctx context.Context, userID string) (int, error)
-	// Touch bumps conversations.updated_at.
+	// Touch bumps conversations.updated_at when a message is written; a resolved conversation is open again.
 	Touch(ctx context.Context, id string) error
+	// SetResolved marks a conversation as resolved, or open again; ErrNotFound if it does not exist.
+	SetResolved(ctx context.Context, id string, resolved bool) error
 	// IncrementUnreadForOthers atomically adds 1 to every participant except senderID.
 	IncrementUnreadForOthers(ctx context.Context, id, senderID string) error
 }
@@ -36,7 +38,7 @@ func NewConversationRepository(store *Store) ConversationRepository {
 }
 
 const summarySelect = `
-SELECT c.id, c.admin_id, c.user_id, c.updated_at, c.created_at, p.unread_count,
+SELECT c.id, c.admin_id, c.user_id, c.updated_at, c.created_at, c.resolved_at, p.unread_count,
        lm.content AS last_message_content, lm.sender_id AS last_message_sender_id, lm.created_at AS last_message_at
 FROM conversation_participants p
 JOIN conversations c ON c.id = p.conversation_id
@@ -132,8 +134,21 @@ func (r *conversationRepository) GlobalUnreadCount(ctx context.Context, userID s
 func (r *conversationRepository) Touch(ctx context.Context, id string) error {
 	ctx, cancel := QueryTimeout(ctx)
 	defer cancel()
-	_, err := r.store.Conn(ctx).Exec(ctx, `UPDATE conversations SET updated_at = now() WHERE id = $1`, id)
+	_, err := r.store.Conn(ctx).Exec(ctx, `UPDATE conversations SET updated_at = now(), resolved_at = NULL WHERE id = $1`, id)
 	return MapError(err)
+}
+
+func (r *conversationRepository) SetResolved(ctx context.Context, id string, resolved bool) error {
+	ctx, cancel := QueryTimeout(ctx)
+	defer cancel()
+	tag, err := r.store.Conn(ctx).Exec(ctx, `UPDATE conversations SET resolved_at = CASE WHEN $2 THEN now() END WHERE id = $1`, id, resolved)
+	if err != nil {
+		return MapError(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *conversationRepository) IncrementUnreadForOthers(ctx context.Context, id, senderID string) error {

@@ -40,6 +40,7 @@ func initializeRoutes(r *gin.Engine, services *services.Services) {
 	adminGroup.Use(AuthMiddleware(), RequireRole("admin"))
 	{
 		adminGroup.POST("/admin/conversations", handlers.StartConversation(services.Conversation))
+		adminGroup.PUT("/admin/conversations/:id/resolved", handlers.SetResolved(services.Conversation))
 	}
 
 	// Fallback
