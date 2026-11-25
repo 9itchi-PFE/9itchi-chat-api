@@ -25,6 +25,7 @@ type ConversationSummary struct {
 	UserID              string     `db:"user_id"`
 	UpdatedAt           time.Time  `db:"updated_at"`
 	CreatedAt           time.Time  `db:"created_at"`
+	ResolvedAt          *time.Time `db:"resolved_at"`
 	UnreadCount         int        `db:"unread_count"`
 	LastMessageContent  *string    `db:"last_message_content"`
 	LastMessageSenderID *string    `db:"last_message_sender_id"`

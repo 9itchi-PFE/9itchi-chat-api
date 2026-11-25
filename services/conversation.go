@@ -66,16 +66,21 @@ func repoError(err error, notFoundMsg string) *models.ApiError {
 
 // ConversationService holds all business logic for conversation. Handlers stay thin.
 type ConversationService interface {
-	// GET /conversations: conversations the caller takes part in, updated_at desc
+	// GET /conversations: the conversations of a seat (the team for an admin, the student for a student), updated_at desc
 	ListConversations(ctx context.Context, userID string, query api.ListQuery) (*api.ConversationListResponse, *models.ApiError)
-	// POST /admin/conversations: admin starts a chat with any user (idempotent per admin+user pair)
+	// POST /conversations: the student's conversation with the team, created on first use
+	OpenSupport(ctx context.Context, userID, role string) (*api.ConversationResponse, *models.ApiError)
+	// POST /admin/conversations: the team's conversation with a student, created on first use
 	StartConversation(ctx context.Context, userID, role string, req api.StartConversationRequest) (*api.ConversationResponse, *models.ApiError)
+	// PUT /admin/conversations/:id/resolved: the team marks a conversation as resolved, or open again
+	SetResolved(ctx context.Context, id string, req api.ResolveRequest) (*api.ConversationResponse, *models.ApiError)
 	// PUT /conversations/:id/read: reset the caller's unread count
 	MarkConversationRead(ctx context.Context, userID string, id string) (*api.ConversationReadResponse, *models.ApiError)
 	// GET /user/global-unread-count: total unread across conversations
 	GlobalUnreadCount(ctx context.Context, userID string) (*api.UnreadCountResponse, *models.ApiError)
-	// GET /chat/ably-token: Ably token request scoped to the caller's conversation channels (503 when Ably is not configured)
-	AblyToken(ctx context.Context, userID string) (*api.AblyTokenResponse, *models.ApiError)
+	// GET /chat/ably-token: Ably token request scoped to the conversation channels of the seat, for the client
+	// userID (503 when Ably is not configured)
+	AblyToken(ctx context.Context, seatID, userID string) (*api.AblyTokenResponse, *models.ApiError)
 }
 
 type conversationService struct {
@@ -112,14 +117,50 @@ func (s *conversationService) StartConversation(ctx context.Context, userID, rol
 	if !uuidRe.MatchString(req.UserID) {
 		return nil, apiError(http.StatusBadRequest, "invalid user_id")
 	}
-	if req.UserID == userID {
+	if req.UserID == userID || req.UserID == core.TeamID {
 		return nil, apiError(http.StatusBadRequest, "cannot start a conversation with yourself")
 	}
-	conv, err := s.repo.GetOrCreate(ctx, userID, req.UserID)
+	return s.open(ctx, req.UserID, core.TeamID)
+}
+
+// OpenSupport gives a student their conversation with the team. An admin has no conversation of their own: the
+// team writes to a student through StartConversation.
+func (s *conversationService) OpenSupport(ctx context.Context, userID, role string) (*api.ConversationResponse, *models.ApiError) {
+	if role == roleAdmin {
+		return nil, apiError(http.StatusForbidden, "forbidden")
+	}
+	if !uuidRe.MatchString(userID) || userID == core.TeamID {
+		return nil, apiError(http.StatusBadRequest, "invalid user id")
+	}
+	return s.open(ctx, userID, userID)
+}
+
+// open returns the one conversation between the team and a student, creating it if missing, as seen from a seat.
+func (s *conversationService) open(ctx context.Context, studentID, seatID string) (*api.ConversationResponse, *models.ApiError) {
+	conv, err := s.repo.GetOrCreate(ctx, core.TeamID, studentID)
 	if err != nil {
 		return nil, repoError(err, "conversation not found")
 	}
-	summary, err := s.repo.GetForParticipant(ctx, conv.ID, userID)
+	summary, err := s.repo.GetForParticipant(ctx, conv.ID, seatID)
+	if err != nil {
+		return nil, repoError(err, "conversation not found")
+	}
+	resp := mapping.ConversationSummaryToResponse(*summary)
+	return &resp, nil
+}
+
+// SetResolved is the team's: a resolved conversation stays in the inbox, and any new message opens it again.
+func (s *conversationService) SetResolved(ctx context.Context, id string, req api.ResolveRequest) (*api.ConversationResponse, *models.ApiError) {
+	if req.Resolved == nil {
+		return nil, apiError(http.StatusBadRequest, "resolved is required")
+	}
+	if !uuidRe.MatchString(id) {
+		return nil, apiError(http.StatusNotFound, "conversation not found")
+	}
+	if err := s.repo.SetResolved(ctx, id, *req.Resolved); err != nil {
+		return nil, repoError(err, "conversation not found")
+	}
+	summary, err := s.repo.GetForParticipant(ctx, id, core.TeamID)
 	if err != nil {
 		return nil, repoError(err, "conversation not found")
 	}
@@ -145,12 +186,12 @@ func (s *conversationService) GlobalUnreadCount(ctx context.Context, userID stri
 	return &api.UnreadCountResponse{UnreadCount: n}, nil
 }
 
-func (s *conversationService) AblyToken(ctx context.Context, userID string) (*api.AblyTokenResponse, *models.ApiError) {
+func (s *conversationService) AblyToken(ctx context.Context, seatID, userID string) (*api.AblyTokenResponse, *models.ApiError) {
 	if s.tokens == nil {
 		return nil, apiError(http.StatusServiceUnavailable, "realtime unavailable")
 	}
 	// Channel name = conversation id; the most recently updated conversations are granted.
-	items, _, err := s.repo.ListForUser(ctx, userID, maxTokenChannels, 0)
+	items, _, err := s.repo.ListForUser(ctx, seatID, maxTokenChannels, 0)
 	if err != nil {
 		return nil, repoError(err, "conversation not found")
 	}

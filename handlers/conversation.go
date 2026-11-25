@@ -18,7 +18,7 @@ func ListConversations(svc services.ConversationService) gin.HandlerFunc {
 			models.FormatError(c, &models.ApiError{Code: http.StatusBadRequest, Error: err})
 			return
 		}
-		result, apiErr := svc.ListConversations(c.Request.Context(), c.GetString("user_id"), query)
+		result, apiErr := svc.ListConversations(c.Request.Context(), c.GetString("seat_id"), query)
 		if apiErr != nil {
 			models.FormatError(c, apiErr)
 			return
@@ -47,7 +47,7 @@ func StartConversation(svc services.ConversationService) gin.HandlerFunc {
 // MarkConversationRead: PUT /conversations/:id/read (user) reset unread count.
 func MarkConversationRead(svc services.ConversationService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		result, apiErr := svc.MarkConversationRead(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
+		result, apiErr := svc.MarkConversationRead(c.Request.Context(), c.GetString("seat_id"), c.Param("id"))
 		if apiErr != nil {
 			models.FormatError(c, apiErr)
 			return
@@ -59,7 +59,7 @@ func MarkConversationRead(svc services.ConversationService) gin.HandlerFunc {
 // GlobalUnreadCount: GET /user/global-unread-count (user) total unread across conversations.
 func GlobalUnreadCount(svc services.ConversationService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		result, apiErr := svc.GlobalUnreadCount(c.Request.Context(), c.GetString("user_id"))
+		result, apiErr := svc.GlobalUnreadCount(c.Request.Context(), c.GetString("seat_id"))
 		if apiErr != nil {
 			models.FormatError(c, apiErr)
 			return
@@ -71,7 +71,36 @@ func GlobalUnreadCount(svc services.ConversationService) gin.HandlerFunc {
 // AblyToken: GET /chat/ably-token (user) scoped Ably token request.
 func AblyToken(svc services.ConversationService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		result, apiErr := svc.AblyToken(c.Request.Context(), c.GetString("user_id"))
+		result, apiErr := svc.AblyToken(c.Request.Context(), c.GetString("seat_id"), c.GetString("user_id"))
+		if apiErr != nil {
+			models.FormatError(c, apiErr)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	}
+}
+
+// OpenSupport: POST /conversations (user) the student's conversation with the team, created on first use.
+func OpenSupport(svc services.ConversationService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		result, apiErr := svc.OpenSupport(c.Request.Context(), c.GetString("user_id"), c.GetString("role"))
+		if apiErr != nil {
+			models.FormatError(c, apiErr)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	}
+}
+
+// SetResolved: PUT /admin/conversations/:id/resolved (admin) mark a conversation as resolved, or open again.
+func SetResolved(svc services.ConversationService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req api.ResolveRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			models.FormatError(c, &models.ApiError{Code: http.StatusBadRequest, Error: err})
+			return
+		}
+		result, apiErr := svc.SetResolved(c.Request.Context(), c.Param("id"), req)
 		if apiErr != nil {
 			models.FormatError(c, apiErr)
 			return

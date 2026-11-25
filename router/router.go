@@ -24,9 +24,10 @@ func initializeRoutes(r *gin.Engine, services *services.Services) {
 
 	// user endpoints
 	userGroup := r.Group("/")
-	userGroup.Use(AuthMiddleware())
+	userGroup.Use(AuthMiddleware(), SupportSeat())
 	{
 		userGroup.GET("/conversations", handlers.ListConversations(services.Conversation))
+		userGroup.POST("/conversations", handlers.OpenSupport(services.Conversation))
 		userGroup.PUT("/conversations/:id/read", handlers.MarkConversationRead(services.Conversation))
 		userGroup.GET("/user/global-unread-count", handlers.GlobalUnreadCount(services.Conversation))
 		userGroup.GET("/chat/ably-token", handlers.AblyToken(services.Conversation))
@@ -39,6 +40,7 @@ func initializeRoutes(r *gin.Engine, services *services.Services) {
 	adminGroup.Use(AuthMiddleware(), RequireRole("admin"))
 	{
 		adminGroup.POST("/admin/conversations", handlers.StartConversation(services.Conversation))
+		adminGroup.PUT("/admin/conversations/:id/resolved", handlers.SetResolved(services.Conversation))
 	}
 
 	// Fallback

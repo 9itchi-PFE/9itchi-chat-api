@@ -22,6 +22,8 @@ type fakeConvSvc struct {
 	startRole string
 	startReq  api.StartConversationRequest
 	err       *models.ApiError
+	seat      string
+	resolved  *bool
 }
 
 func (f *fakeConvSvc) ListConversations(_ context.Context, _ string, q api.ListQuery) (*api.ConversationListResponse, *models.ApiError) {
@@ -54,7 +56,23 @@ func (f *fakeConvSvc) GlobalUnreadCount(context.Context, string) (*api.UnreadCou
 	return &api.UnreadCountResponse{UnreadCount: 4}, nil
 }
 
-func (f *fakeConvSvc) AblyToken(_ context.Context, userID string) (*api.AblyTokenResponse, *models.ApiError) {
+func (f *fakeConvSvc) SetResolved(_ context.Context, id string, req api.ResolveRequest) (*api.ConversationResponse, *models.ApiError) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	f.resolved = req.Resolved
+	return &api.ConversationResponse{ID: id}, nil
+}
+
+func (f *fakeConvSvc) OpenSupport(_ context.Context, userID, role string) (*api.ConversationResponse, *models.ApiError) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &api.ConversationResponse{ID: "c1", AdminID: "team", UserID: userID}, nil
+}
+
+func (f *fakeConvSvc) AblyToken(_ context.Context, seatID, userID string) (*api.AblyTokenResponse, *models.ApiError) {
+	f.seat = seatID
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -64,6 +82,8 @@ func (f *fakeConvSvc) AblyToken(_ context.Context, userID string) (*api.AblyToke
 type fakeMsgSvc struct {
 	listQuery api.ListMessagesQuery
 	sendReq   api.SendMessageRequest
+	seat      string
+	sender    string
 	err       *models.ApiError
 }
 
@@ -75,7 +95,8 @@ func (f *fakeMsgSvc) ListMessages(_ context.Context, _ string, _ string, q api.L
 	return &api.MessageListResponse{Items: []api.MessageResponse{}}, nil
 }
 
-func (f *fakeMsgSvc) SendMessage(_ context.Context, _ string, _ string, req api.SendMessageRequest) (*api.MessageResponse, *models.ApiError) {
+func (f *fakeMsgSvc) SendMessage(_ context.Context, seatID, userID, _ string, req api.SendMessageRequest) (*api.MessageResponse, *models.ApiError) {
+	f.seat, f.sender = seatID, userID
 	f.sendReq = req
 	if f.err != nil {
 		return nil, f.err
@@ -89,6 +110,7 @@ func do(h gin.HandlerFunc, method, path, route, body string) *httptest.ResponseR
 	r.Use(func(c *gin.Context) {
 		c.Set("user_id", "u1")
 		c.Set("role", "admin")
+		c.Set("seat_id", "team-seat")
 	})
 	r.Handle(method, route, h)
 	w := httptest.NewRecorder()
@@ -172,6 +194,8 @@ func TestSendMessageHandler(t *testing.T) {
 	w := do(SendMessage(svc), http.MethodPost, "/conversations/c1/messages", "/conversations/:id/messages", `{"content":"hi"}`)
 	assert.Equal(t, http.StatusCreated, w.Code)
 	assert.Equal(t, "hi", svc.sendReq.Content)
+	assert.Equal(t, "team-seat", svc.seat, "access and unread counts go by seat")
+	assert.Equal(t, "u1", svc.sender, "the message keeps who wrote it")
 
 	w = do(SendMessage(svc), http.MethodPost, "/conversations/c1/messages", "/conversations/:id/messages", `{}`)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -179,4 +203,34 @@ func TestSendMessageHandler(t *testing.T) {
 	svc.err = &models.ApiError{Code: http.StatusNotFound, Error: errors.New("conversation not found")}
 	w = do(SendMessage(svc), http.MethodPost, "/conversations/c1/messages", "/conversations/:id/messages", `{"content":"hi"}`)
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestOpenSupportHandler(t *testing.T) {
+	svc := &fakeConvSvc{}
+	w := do(OpenSupport(svc), http.MethodPost, "/conversations", "/conversations", "")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"user_id":"u1"`)
+
+	svc.err = &models.ApiError{Code: http.StatusForbidden, Error: errors.New("forbidden")}
+	w = do(OpenSupport(svc), http.MethodPost, "/conversations", "/conversations", "")
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestAblyTokenGoesBySeat(t *testing.T) {
+	svc := &fakeConvSvc{}
+	w := do(AblyToken(svc), http.MethodGet, "/chat/ably-token", "/chat/ably-token", "")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "team-seat", svc.seat)
+	assert.Contains(t, w.Body.String(), `"clientId":"u1"`)
+}
+
+func TestSetResolvedHandler(t *testing.T) {
+	svc := &fakeConvSvc{}
+	w := do(SetResolved(svc), http.MethodPut, "/admin/conversations/c1/resolved", "/admin/conversations/:id/resolved", `{"resolved":true}`)
+	assert.Equal(t, http.StatusOK, w.Code)
+	if assert.NotNil(t, svc.resolved) {
+		assert.True(t, *svc.resolved)
+	}
+	w = do(SetResolved(svc), http.MethodPut, "/admin/conversations/c1/resolved", "/admin/conversations/:id/resolved", `{}`)
+	assert.Equal(t, http.StatusBadRequest, w.Code, "resolved must be said")
 }

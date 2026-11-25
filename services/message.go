@@ -28,7 +28,8 @@ type MessageService interface {
 	// GET /conversations/:id/messages: message history (participants only), newest first
 	ListMessages(ctx context.Context, userID string, id string, query api.ListMessagesQuery) (*api.MessageListResponse, *models.ApiError)
 	// POST /conversations/:id/messages: store, bump unread for the other participant, then publish
-	SendMessage(ctx context.Context, userID string, id string, req api.SendMessageRequest) (*api.MessageResponse, *models.ApiError)
+	// seatID is the participant the caller acts as (the team for an admin); userID is who writes.
+	SendMessage(ctx context.Context, seatID, userID string, id string, req api.SendMessageRequest) (*api.MessageResponse, *models.ApiError)
 }
 
 type messageService struct {
@@ -82,15 +83,16 @@ func (s *messageService) ListMessages(ctx context.Context, userID string, id str
 	return resp, nil
 }
 
-func (s *messageService) SendMessage(ctx context.Context, userID string, id string, req api.SendMessageRequest) (*api.MessageResponse, *models.ApiError) {
+func (s *messageService) SendMessage(ctx context.Context, seatID, userID string, id string, req api.SendMessageRequest) (*api.MessageResponse, *models.ApiError) {
 	content := strings.TrimSpace(req.Content)
 	if n := utf8.RuneCountInString(content); n < 1 || n > maxMessageLength {
 		return nil, apiError(http.StatusBadRequest, "content must be between 1 and 4000 characters")
 	}
-	if apiErr := s.requireParticipant(ctx, userID, id); apiErr != nil {
+	if apiErr := s.requireParticipant(ctx, seatID, id); apiErr != nil {
 		return nil, apiErr
 	}
 
+	// The message keeps who wrote it (the admin, not the team); the unread counts go by seat.
 	var msg *db.Message
 	err := s.tx.WithTx(ctx, func(ctx context.Context) error {
 		var err error
@@ -100,7 +102,7 @@ func (s *messageService) SendMessage(ctx context.Context, userID string, id stri
 		if err = s.conversations.Touch(ctx, id); err != nil {
 			return err
 		}
-		return s.conversations.IncrementUnreadForOthers(ctx, id, userID)
+		return s.conversations.IncrementUnreadForOthers(ctx, id, seatID)
 	})
 	if err != nil {
 		return nil, repoError(err, "conversation not found")

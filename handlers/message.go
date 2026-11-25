@@ -18,7 +18,7 @@ func ListMessages(svc services.MessageService) gin.HandlerFunc {
 			models.FormatError(c, &models.ApiError{Code: http.StatusBadRequest, Error: err})
 			return
 		}
-		result, apiErr := svc.ListMessages(c.Request.Context(), c.GetString("user_id"), c.Param("id"), query)
+		result, apiErr := svc.ListMessages(c.Request.Context(), c.GetString("seat_id"), c.Param("id"), query)
 		if apiErr != nil {
 			models.FormatError(c, apiErr)
 			return
@@ -35,7 +35,7 @@ func SendMessage(svc services.MessageService) gin.HandlerFunc {
 			models.FormatError(c, &models.ApiError{Code: http.StatusBadRequest, Error: err})
 			return
 		}
-		result, apiErr := svc.SendMessage(c.Request.Context(), c.GetString("user_id"), c.Param("id"), req)
+		result, apiErr := svc.SendMessage(c.Request.Context(), c.GetString("seat_id"), c.GetString("user_id"), c.Param("id"), req)
 		if apiErr != nil {
 			models.FormatError(c, apiErr)
 			return

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"9itchi-chat-api/core"
 	"context"
 	"errors"
 	"net/http"
@@ -65,7 +66,7 @@ func newMsgFixture() *msgFixture {
 func TestSendMessage_Success(t *testing.T) {
 	f := newMsgFixture()
 
-	resp, apiErr := f.svc.SendMessage(context.Background(), userID, convID, api.SendMessageRequest{Content: "  hello  "})
+	resp, apiErr := f.svc.SendMessage(context.Background(), userID, userID, convID, api.SendMessageRequest{Content: "  hello  "})
 
 	require.Nil(t, apiErr)
 	assert.Equal(t, "hello", resp.Content)
@@ -89,7 +90,7 @@ func TestSendMessage_Validation(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newMsgFixture()
-			resp, apiErr := f.svc.SendMessage(context.Background(), userID, convID, api.SendMessageRequest{Content: tc.content})
+			resp, apiErr := f.svc.SendMessage(context.Background(), userID, userID, convID, api.SendMessageRequest{Content: tc.content})
 			assert.Nil(t, resp)
 			require.NotNil(t, apiErr)
 			assert.Equal(t, http.StatusBadRequest, apiErr.Code)
@@ -100,7 +101,7 @@ func TestSendMessage_Validation(t *testing.T) {
 
 func TestSendMessage_MaxLengthAccepted(t *testing.T) {
 	f := newMsgFixture()
-	_, apiErr := f.svc.SendMessage(context.Background(), adminID, convID, api.SendMessageRequest{Content: strings.Repeat("é", 4000)})
+	_, apiErr := f.svc.SendMessage(context.Background(), adminID, adminID, convID, api.SendMessageRequest{Content: strings.Repeat("é", 4000)})
 	assert.Nil(t, apiErr)
 }
 
@@ -117,7 +118,7 @@ func TestSendMessage_ParticipantIsolation(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newMsgFixture()
-			resp, apiErr := f.svc.SendMessage(context.Background(), tc.caller, tc.convID, api.SendMessageRequest{Content: "hi"})
+			resp, apiErr := f.svc.SendMessage(context.Background(), tc.caller, tc.caller, tc.convID, api.SendMessageRequest{Content: "hi"})
 			assert.Nil(t, resp)
 			require.NotNil(t, apiErr)
 			assert.Equal(t, http.StatusNotFound, apiErr.Code)
@@ -132,7 +133,7 @@ func TestSendMessage_RepoFailureRollsBackAndSkipsPublish(t *testing.T) {
 	f := newMsgFixture()
 	f.convs.IncrementUnreadForOthersFn = func(context.Context, string, string) error { return errors.New("db down: secret detail") }
 
-	resp, apiErr := f.svc.SendMessage(context.Background(), userID, convID, api.SendMessageRequest{Content: "hi"})
+	resp, apiErr := f.svc.SendMessage(context.Background(), userID, userID, convID, api.SendMessageRequest{Content: "hi"})
 
 	assert.Nil(t, resp)
 	require.NotNil(t, apiErr)
@@ -145,7 +146,7 @@ func TestSendMessage_PublishFailureDoesNotFailRequest(t *testing.T) {
 	f := newMsgFixture()
 	f.rt.Err = errors.New("realtime down")
 
-	resp, apiErr := f.svc.SendMessage(context.Background(), userID, convID, api.SendMessageRequest{Content: "hi"})
+	resp, apiErr := f.svc.SendMessage(context.Background(), userID, userID, convID, api.SendMessageRequest{Content: "hi"})
 
 	require.Nil(t, apiErr)
 	assert.NotNil(t, resp)
@@ -202,4 +203,28 @@ func TestListMessages(t *testing.T) {
 		require.NotNil(t, apiErr)
 		assert.Equal(t, http.StatusInternalServerError, apiErr.Code)
 	})
+}
+
+// An admin answers from the seat of the team: access and unread counts go by seat, the message keeps its author.
+func TestSendMessageFromTheTeamSeat(t *testing.T) {
+	f := newMsgFixture()
+	var asked string
+	f.convs.GetForParticipantFn = func(_ context.Context, id, seat string) (*db.ConversationSummary, error) {
+		asked = seat
+		if seat != core.TeamID {
+			return nil, repositories.ErrNotFound
+		}
+		return &db.ConversationSummary{ID: id, AdminID: core.TeamID, UserID: userID}, nil
+	}
+
+	resp, apiErr := f.svc.SendMessage(context.Background(), core.TeamID, adminID, convID, api.SendMessageRequest{Content: "Bonjour"})
+	require.Nil(t, apiErr)
+	assert.Equal(t, core.TeamID, asked)
+	assert.Equal(t, adminID, resp.SenderID)
+	assert.Contains(t, f.calls, "unread:"+convID+":"+core.TeamID, "everyone but the team seat gets one more unread")
+
+	// An admin acting from their own id is not a participant any more.
+	_, apiErr = f.svc.SendMessage(context.Background(), adminID, adminID, convID, api.SendMessageRequest{Content: "Bonjour"})
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusNotFound, apiErr.Code)
 }
