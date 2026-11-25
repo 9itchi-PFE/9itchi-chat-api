@@ -41,3 +41,7 @@ go run main.go
 go test ./...
 go test -tags integration -count=1 ./repositories/...   # embedded Postgres, ~1 min
 ```
+
+## Account deletion
+
+`DELETE /internal/users/:id` (`x-api-key`) is called by account-api before it deletes an account. Here it concerns the support conversations of the student, with their messages. It runs in one transaction, answers `204`, and can be called again without harm (account-api retries until every service has answered). Nothing about the user is logged.

@@ -10,6 +10,8 @@ import (
 
 // Services holds service implementations and the peer clients they call.
 type Services struct {
+	// Erase removes what this service keeps about a deleted account.
+	Erase        EraseService
 	Conversation ConversationService
 	Message      MessageService
 	Clients      *Clients
@@ -24,6 +26,7 @@ type Clients struct {
 func InitServices(config utils.AppConfig, repos *repositories.Repositories) *Services {
 	realtime, tokens := core.NewRealtime(config.AblyAPIKey)
 	return &Services{
+		Erase:        NewEraseService(repos.Erase),
 		Conversation: NewConversationService(repos.Conversation, tokens),
 		Message:      NewMessageService(repos.Store, repos.Conversation, repos.Message, realtime),
 		Clients: &Clients{

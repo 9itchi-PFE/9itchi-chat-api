@@ -43,6 +43,13 @@ func initializeRoutes(r *gin.Engine, services *services.Services) {
 		adminGroup.PUT("/admin/conversations/:id/resolved", handlers.SetResolved(services.Conversation))
 	}
 
+	// internal endpoints
+	internalGroup := r.Group("/")
+	internalGroup.Use(InternalAPIKeyMiddleware())
+	{
+		internalGroup.DELETE("/internal/users/:id", handlers.EraseUser(services.Erase))
+	}
+
 	// Fallback
 	r.NoRoute(handlers.NoRoute)
 }

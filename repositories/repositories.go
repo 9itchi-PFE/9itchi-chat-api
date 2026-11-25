@@ -11,6 +11,7 @@ type Repositories struct {
 	Store        *Store
 	Conversation ConversationRepository
 	Message      MessageRepository
+	Erase        EraseRepository
 }
 
 // InitRepositories connects to PostgreSQL, applies migrations and builds the repositories.
@@ -26,6 +27,7 @@ func InitRepositories(ctx context.Context, config utils.AppConfig) (*Repositorie
 		Store:        store,
 		Conversation: NewConversationRepository(store),
 		Message:      NewMessageRepository(store),
+		Erase:        NewEraseRepository(store),
 	}, nil
 }
 
