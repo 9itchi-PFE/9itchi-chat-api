@@ -1,23 +1,30 @@
 # 9itchi Chat API
+Student-to-team support chat. Postgres is the source of truth, Ably the live layer. Port 8088, DB `chat`. No RabbitMQ.
 
-Admin-user live support chat. PostgreSQL is the source of truth, Ably delivers, presence and unread counts.
+## Conventions (shared by every 9itchi Go service)
+- `handlers/` thin (validate, authorize, call service, JSON) -> `services/` all logic, returns `(T, *models.ApiError)` -> `repositories/` only Postgres, plain errors (`ErrNotFound`, `ErrConflict`). Error body `{"error": "..."}`.
+- DB calls use `repositories.QueryTimeout`; multi-table writes `Store.WithTx`.
+- Schema: add `migrations/NNNN_name.sql` (goose, embedded, runs at startup). Never edit a merged migration.
+- Auth: `Authorization: Bearer` AES-GCM-wrapped HS256 JWT (claims `id`, `email`, `role`, `typ`, `exp`; access only). `/admin/*` = `RequireRole("admin")`. `/internal/*` = `x-api-key` (`INTERNAL_API_KEY`), blocked by nginx.
+- Env only, validated in `utils/config.go`. Common: `PORT`, `ENVIRONMENT`, `DATABASE_URL`, `ITCHI_SECRET_KEY`, `ITCHI_ENCRYPTION_KEY`, `INTERNAL_API_KEY`, `INTERNAL_API_KEY_REQUIRED`. Never log tokens, passwords, PII.
+- Tests: `{resource}_test.go`, testify, func-field fakes (no testify/mock), success + error paths. Repo tests: `//go:build integration`, embedded Postgres.
+- Check: `gofmt -l .; go build ./... && go vet ./... && go test ./...`; `go test -tags integration -count=1 ./repositories/...`; `golangci-lint run`.
 
-## Stack
-Go, Gin, PostgreSQL (db `chat`, pgx + goose migrations), Viper config, Zap logger. Peers over HTTP (`pkg/`): account, notification.
+## Routes
+- User (`AuthMiddleware` + `SupportSeat`: an admin acts as the team seat): `GET|POST /conversations` (POST 403 for admin), `PUT /conversations/:id/read`, `GET|POST /conversations/:id/messages`, `GET /user/global-unread-count`, `GET /chat/ably-token` (503 without Ably).
+- Admin: `POST /admin/conversations` (`user_id`), `PUT /admin/conversations/:id/resolved` (`{resolved}`).
+- Internal: `DELETE /internal/users/:id`.
 
-## Layout
-`main.go`, `app/` (init order: config, repositories, services, router), `router/` (routes + middleware), `handlers/` (thin) -> `services/` (logic) -> `repositories/` (Postgres only), `core/` (interfaces/factories), `models/{api,db,mapping}`, `pkg/` (peer clients), `utils/` (config, logger).
+## Data, providers
+- Tables: `conversations` (`resolved_at`), `conversation_participants` (`unread_count` per seat), `messages`. Latest `0003_resolved.sql`.
+- `core.Realtime`: Ably if `ABLY_API_KEY` else no-op. Server publishes event `message` on channel = conversation id, as `core.PublisherClientID`.
+- Env: `ABLY_API_KEY`, `ACCOUNT_API_URL`, `NOTIFICATION_API_URL`.
 
-Entities: `Conversation`, `Message`.
+## Domain rules
+- Team inbox: one conversation per student, held by team seat `00000000-0000-4000-8000-000000000000` (`0002_team_inbox.sql`); the writing admin stays the sender.
+- Message 1-4000 chars (DB CHECK + service). Non-participant = 404. Lists `page`/`page_size` (20, max 100); messages newest first, `before` cursor.
+- Resolved conversations stay listed; a new message reopens them.
+- Ably publish after commit on a detached context; failure only logs. Clients never publish: token = subscribe/presence/history on the 100 latest conversation channels, TTL 30 min.
 
-## Rules
-- Every endpoint: validate inputs -> authorize caller -> execute via service -> respond JSON. No business logic in handlers.
-- Services return `(T, *models.ApiError)`; repos return plain errors; services wrap with a status code. Error body is always `{"error": "message"}`.
-- Users are referenced by their UUID `id` (JWT claim `id`). JWT claims: `id`, `email`, `role`, `typ`, `exp`. Header `Authorization: Bearer <AES-GCM encrypted HS256 JWT>`.
-- Every DB call uses a context with a deadline (`repositories.QueryTimeout`). Schema and indexes live in `migrations/*.sql` (goose, embedded, run at startup). Multi-table writes use `Store.WithTx`. Never select blob columns in list queries.
-- Nil-check optional nested fields. Never log passwords, tokens, Gmail tokens or PII. Secrets and URLs only from env.
-- `AuthMiddleware` validates the encrypted JWT (access tokens only); internal routes need `x-api-key`.
-- Tests: `{resource}_test.go`, testify, mock dependencies, cover success and error paths. Write the test with the implementation.
-
-## Commands
-`go build ./... && go test ./...`, `golangci-lint run`, `go run main.go` (port 8088), `docker build -t 9itchi-chat-api .`.
+## Gotchas
+- `pkg/account` and `pkg/notification` clients are built but unused.
