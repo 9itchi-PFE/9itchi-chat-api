@@ -1,6 +1,6 @@
 # 9itchi Chat API
 
-Admin-user live support chat. MongoDB is source of truth, Ably delivers, presence and unread counts.
+Admin-user live support chat. PostgreSQL is the source of truth, Ably delivers, presence and unread counts.
 
 ## Stack
 Go, Gin, PostgreSQL (db `chat`, pgx + goose migrations), Viper config, Zap logger. Peers over HTTP (`pkg/`): account, notification.
