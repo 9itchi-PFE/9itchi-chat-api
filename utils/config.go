@@ -22,6 +22,9 @@ type AppConfig struct {
 	// Peer service base URLs.
 	AccountAPIURL      string
 	NotificationAPIURL string
+	// RabbitMQURL (env RABBITMQ_URL, optional): where support.replied is published; empty = events are only logged.
+	// Never log it.
+	RabbitMQURL string
 	// AblyAPIKey (env ABLY_API_KEY, optional) enables live delivery and the token endpoint. Never log it.
 	AblyAPIKey string
 }
@@ -41,6 +44,7 @@ func LoadConfig() AppConfig {
 		AccountAPIURL:          getStringWithDefault("ACCOUNT_API_URL", "http://9itchi-account-api:8081"),
 		NotificationAPIURL:     getStringWithDefault("NOTIFICATION_API_URL", "http://9itchi-notification-api:8087"),
 		AblyAPIKey:             getStringWithDefault("ABLY_API_KEY", ""),
+		RabbitMQURL:            getStringWithDefault("RABBITMQ_URL", ""),
 	}
 }
 
