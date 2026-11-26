@@ -17,7 +17,8 @@ type ConversationRepository interface {
 	GetForParticipant(ctx context.Context, id, userID string) (*db.ConversationSummary, error)
 	// ListForUser returns the caller's conversations (updated_at desc) and the total count.
 	ListForUser(ctx context.Context, userID string, limit, offset int) ([]db.ConversationSummary, int, error)
-	// MarkRead resets the caller's unread count; ErrNotFound if userID is not a participant.
+	// MarkRead resets the caller's unread count (and whether they were emailed about it); ErrNotFound if userID is
+	// not a participant.
 	MarkRead(ctx context.Context, id, userID string) error
 	// GlobalUnreadCount sums the caller's unread counts in one aggregate query.
 	GlobalUnreadCount(ctx context.Context, userID string) (int, error)
@@ -112,7 +113,7 @@ func (r *conversationRepository) MarkRead(ctx context.Context, id, userID string
 	ctx, cancel := QueryTimeout(ctx)
 	defer cancel()
 	tag, err := r.store.Conn(ctx).Exec(ctx,
-		`UPDATE conversation_participants SET unread_count = 0 WHERE conversation_id = $1 AND user_id = $2`, id, userID)
+		`UPDATE conversation_participants SET unread_count = 0, reply_emailed = false WHERE conversation_id = $1 AND user_id = $2`, id, userID)
 	if err != nil {
 		return MapError(err)
 	}

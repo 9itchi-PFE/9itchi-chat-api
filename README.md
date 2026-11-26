@@ -45,3 +45,12 @@ go test -tags integration -count=1 ./repositories/...   # embedded Postgres, ~1 
 ## Account deletion
 
 `DELETE /internal/users/:id` (`x-api-key`) is called by account-api before it deletes an account. Here it concerns the support conversations of the student, with their messages. It runs in one transaction, answers `204`, and can be called again without harm (account-api retries until every service has answered). Nothing about the user is logged.
+
+## Email when the team replies
+
+The chat has no email of its own: `services.ReplyNotifier` publishes `support.replied` (`{user_id, conversation_id, unread}`, never the text) on `9itchi.events`, and notification-api sends the email (fr/en/ar, button to `/support`).
+
+- Once per unread streak: the student's seat is flagged `reply_emailed` when the event leaves, and `PUT /conversations/:id/read` clears the flag.
+- Only after the conversation has been quiet for 2 minutes, so a student reading the chat live gets nothing, and several messages of the team make one email.
+- The sweep runs every minute from the database (`FOR UPDATE SKIP LOCKED`): a restart loses nothing and two instances never send twice. If the event cannot be published, the seat is given back and tried at the next sweep.
+- Unread messages from before migration `0004` count as already told.

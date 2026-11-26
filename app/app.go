@@ -20,9 +20,10 @@ import (
 )
 
 type App struct {
-	Config utils.AppConfig
-	Router *gin.Engine
-	Repos  *repositories.Repositories
+	Config   utils.AppConfig
+	Router   *gin.Engine
+	Repos    *repositories.Repositories
+	Services *services.Services
 }
 
 func New() *App {
@@ -49,6 +50,7 @@ func (app *App) setup() {
 
 	app.Config = config
 	app.Repos = repos
+	app.Services = servicesWrapper
 	app.Router = router.InitializeRouter(servicesWrapper)
 }
 
@@ -65,12 +67,16 @@ func (app *App) Run() {
 		}
 	}()
 
+	sweep, stopSweep := context.WithCancel(context.Background())
+	go app.Services.ReplyNotifier.Run(sweep)
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	stopSweep()
 	_ = srv.Shutdown(ctx)
 	app.Repos.Close()
 }

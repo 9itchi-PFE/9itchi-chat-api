@@ -1,5 +1,5 @@
 # 9itchi Chat API
-Student-to-team support chat. Postgres is the source of truth, Ably the live layer. Port 8088, DB `chat`. No RabbitMQ.
+Student-to-team support chat. Postgres is the source of truth, Ably the live layer. Port 8088, DB `chat`. Publishes one event over RabbitMQ (`support.replied`).
 
 ## Conventions (shared by every 9itchi Go service)
 - `handlers/` thin (validate, authorize, call service, JSON) -> `services/` all logic, returns `(T, *models.ApiError)` -> `repositories/` only Postgres, plain errors (`ErrNotFound`, `ErrConflict`). Error body `{"error": "..."}`.
@@ -16,9 +16,10 @@ Student-to-team support chat. Postgres is the source of truth, Ably the live lay
 - Internal: `DELETE /internal/users/:id`.
 
 ## Data, providers
-- Tables: `conversations` (`resolved_at`), `conversation_participants` (`unread_count` per seat), `messages`. Latest `0003_resolved.sql`.
+- Tables: `conversations` (`resolved_at`), `conversation_participants` (`unread_count` per seat, `reply_emailed`), `messages`. Latest `0004_reply_email.sql`.
 - `core.Realtime`: Ably if `ABLY_API_KEY` else no-op. Server publishes event `message` on channel = conversation id, as `core.PublisherClientID`.
-- Env: `ABLY_API_KEY`, `ACCOUNT_API_URL`, `NOTIFICATION_API_URL`.
+- Events: exchange `9itchi.events`, names in `core/events.go`; empty `RABBITMQ_URL` = `LogPublisher`. `services.ReplyNotifier` (started by `app.Run`) sweeps every minute: a student seat with unread team messages, not yet emailed in this unread streak, in a conversation quiet for 2 min, is claimed (`reply_emailed`, `FOR UPDATE SKIP LOCKED`) and `support.replied {user_id, conversation_id, unread}` is published (never the text); publish failure gives the seat back. `MarkRead` clears the flag. notification-api sends the email.
+- Env: `ABLY_API_KEY`, `ACCOUNT_API_URL`, `NOTIFICATION_API_URL`, `RABBITMQ_URL`.
 
 ## Domain rules
 - Team inbox: one conversation per student, held by team seat `00000000-0000-4000-8000-000000000000` (`0002_team_inbox.sql`); the writing admin stays the sender.
